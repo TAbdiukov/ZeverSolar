@@ -9,7 +9,11 @@ Options:
   --to=endDate       endDate  in format yyyy-mm-dd
 """
 
-import msvcrt
+try:
+	import msvcrt #Windows
+except ImportError:
+	from msvcrt_clone import *
+
 import sqlite3
 import time
 import datetime

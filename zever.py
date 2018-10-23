@@ -16,6 +16,7 @@ from docopt import docopt
 import sqlite3
 import sys
 import os
+import msvcrt
 
 verbose = False
 
