@@ -9,6 +9,11 @@ Options:
   --initDB       initialise the DB
 """
 
+try:
+	import msvcrt #Windows
+except ImportError:
+	from msvcrt_clone import *
+
 import requests
 import time
 from datetime import datetime
