@@ -44,11 +44,11 @@ class msvcrt_clone(ABC):
 
 
 	# switch to normal terminal
-	def set_normal_term():
+	def set_normal_term(self):
 		termios.tcsetattr(self.fd, termios.TCSAFLUSH, self.old_term)
 
 	# switch to unbuffered terminal
-	def set_curses_term():
+	def set_curses_term(self):
 		termios.tcsetattr(self.fd, termios.TCSAFLUSH, self.new_term)
 
 	def putch(ch):
@@ -66,15 +66,3 @@ class msvcrt_clone(ABC):
 		dr,dw,de = select([sys.stdin], [], [], 0)
 		return dr != []
 
-	# if run directly
-	if __name__ == '__main__':
-		atexit.register(set_normal_term)
-		set_curses_term()
-
-		while 1:
-			if kbhit():
-				ch = getch()
-				break
-			sys.stdout.write('.')
-
-		print('done')
