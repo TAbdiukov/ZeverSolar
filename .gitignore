@@ -106,3 +106,24 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+
+# repo specific
+# Local call evidence and audio traces must stay out of source commits.
+audio-debug/
+./recordings/deletedelete
+./vosk-model-*
+./vosk-model-*/
+vosk-model-small-ru-0.22
+vosk-model-*
+vosk-model-*/
+listdump*
+*.db
+*.db
+*.db-*
+./recordings/*
+recordings/*
+listdump.md
+_tmp*.py
+_meta*.py
+*.diff
+*.patch
