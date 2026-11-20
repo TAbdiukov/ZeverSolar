@@ -1,0 +1,15 @@
+[Unit]
+Description=ZeverSolar inverter collector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/zeversolar
+EnvironmentFile=%h/zeversolar/zever.env
+ExecStart=%h/zeversolar/.venv/bin/python %h/zeversolar/zever.py
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=default.target

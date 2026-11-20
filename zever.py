@@ -1,206 +1,165 @@
-"""Collect generation data from a ZeverSolar inverter
-Usage:
-  zever <URL> [--verbose]
-  zever --initDB
+"""Read a ZeverSolar inverter's HTTP /home.cgi endpoint into SQLite."""
 
-Options:
-  -h --help     show this
-  -v --verbose  print output
-  --initDB       initialise the DB
-"""
-
-import requests
+import argparse
+import logging
+import os
+import sqlite3
 import time
 from datetime import datetime
-from docopt import docopt
-import sqlite3
-import sys
-import os
+from pathlib import Path
+from urllib.parse import urlsplit
 
-verbose = False
+import requests
 
-
-def query_yes_no(question, default="no"):
-    """Ask a yes/no question via raw_input() and return their answer.
-
-    "question" is a string that is presented to the user.
-    "default" is the presumed answer if the user just hits <Enter>.
-        It must be "yes" (the default), "no" or None (meaning
-        an answer is required of the user).
-
-    The "answer" return value is True for "yes" or False for "no".
-    """
-    valid = {"yes": True, "y": True, "ye": True,
-             "no": False, "n": False}
-    if default is None:
-        prompt = " [y/n] "
-    elif default == "yes":
-        prompt = " [Y/n] "
-    elif default == "no":
-        prompt = " [y/N] "
-    else:
-        raise ValueError("invalid default answer: '%s'" % default)
-
-    while True:
-        sys.stdout.write(question + prompt)
-        choice = input().lower()
-        if default is not None and choice == '':
-            return valid[default]
-        elif choice in valid:
-            return valid[choice]
-        else:
-            sys.stdout.write("Please respond with 'yes' or 'no' "
-                             "(or 'y' or 'n').\n")
+DB_PATH = Path(os.environ.get("ZEVER_DB", Path(__file__).with_name("zeverData.db")))
+LOG = logging.getLogger("zeversolar")
 
 
-def processZeverResponse(content):
-    """take the response from the Zever Web server and parse it"""
-    parts = content.split('\n')
-    results = {
-        'enable_wifi': parts[0],
-        'Registry Key': parts[3],
-        'Hardware Version': parts[4],
-        'Software Version': parts[5],
-        'Time': parts[6]
-    }
-    if (parts[1] == '0') or (parts[1] == 3):
-        results['Serial Number'] = parts[2]
-    else:
-        results['Registry ID'] = parts[2]
-
-    if parts[7].startswith('OK'):
-        results['Zevercloud communication'] = 'ok'
-    else:
-        results['Zevercloud communication'] = 'error'
-
-    row = int(parts[8])
-    item = 9
-    inverterTable = []  # tb
-    for i in range(5):
-        if i < row:
-            inverterTable.append({
-                'SN': parts[item],
-                'PAC(W)': parts[item + 1],
-                'E_Today(KWh)': parts[item + 2],
-                'Status': parts[item + 3]
-            })
-            item += 4
-    results['inverter'] = inverterTable
-
-    meter = {}
-    meter['status'] = parts[item]
-    results['meter'] = {}
-    if parts[item].startswith('OK'):
-        item += 1
-        meter['m_p'] = parts[item]
-        item += 1
-        meter['m_in'] = parts[item]
-        item += 1
-        meter['m_out'] = parts[item]
-        item += 1
-        meter['m_meter'] = parts[item]
-
-    return results
-
-
-def startPolling(url):
-    """poll the server until it responds again"""
-    print('going into polling mode.')
-    while True:
-        response = os.system('ping -n 1 {}'.format(url))
-        if response == 0:  # ping returns non zero value if it fails
-            print("{}: resuming data collection.".format(datetime.now()))
-            return
-
-        timeToSleep = 120  # wait 2 minutes
-        ts = datetime.now()
-        if ts.hour > 20:
-            timeToSleep = 3600 * (5 + 24 - ts.hour)  # start at 5 am
-        elif ts.hour < 5:
-            timeToSleep = 3600 * ts.hour
-        print("sleeping {} seconds".format(timeToSleep))
-        time.sleep(timeToSleep)
+def initialise_database(conn):
+    """Create missing structures without deleting an existing database."""
+    conn.execute("""CREATE TABLE IF NOT EXISTS inverterData
+                 (date text, SN text, PAC_W int, E_TODAY real, Status text)""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_zever_date ON inverterData(date)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_zever_sn_date ON inverterData(SN, date)")
+    conn.commit()
 
 
 def correct_E_Today(kwh):
-    """correct a bug in the data provided by Zever.
-    the decimal portion for values less than 0.010 is 
-    missing the leading zero, e.g
-    5.9 is actuall 5.09
-    whereas 5.90 is 5.90
-    """
-
-    parts = kwh.split('.')
-    if len(parts[1]) == 1:
-        kwh = '{}.0{}'.format(parts[0], parts[1])
-    return kwh
+    """Work around ZeverSolar's '5.9' meaning '5.09' (but '5.90' is 5.90)."""
+    value = str(kwh).strip()
+    whole, dot, fraction = value.partition(".")
+    if dot and len(fraction) == 1:
+        value = f"{whole}.0{fraction}"
+    result = float(value)
+    if not (0 <= result < float("inf")):
+        raise ValueError("Invalid daily energy reading")
+    return result
 
 
-def collectData(arguments, conn, verbose):
-    url = 'http://{}/home.cgi'.format(arguments['<URL>'])
+def processZeverResponse(content):
+    """Parse ZeverSolar's line-based response (up to five inverters)."""
+    parts = [part.strip() for part in content.splitlines()]
+    if len(parts) < 10:
+        raise ValueError("Incomplete ZeverSolar response")
 
-    # supported languages: ["en_us", "de", "zh_cn"]
-    # default: zn_cn . Sadly no en_au
-    cookies = {"customer_l": "en_us"}
-    lastreading = 0
+    count = int(parts[8])
+    if not 0 <= count <= 5:
+        raise ValueError("Invalid inverter count")
+    if len(parts) < 9 + count * 4 + 1:
+        raise ValueError("Truncated inverter or meter data")
 
-    interval = 30  # (seconds)
-    while (True):
-        try:
-            response = requests.get(url=url, cookies=cookies)
-        except requests.packages.urllib3.exceptions.MaxRetryError as ex:
-            print("connection lost.")
-            if lastreading < 5:
-                startPolling(arguments['<URL>'])
-            continue
+    result = {
+        "enable_wifi": parts[0],
+        "Registry Key": parts[3],
+        "Hardware Version": parts[4],
+        "Software Version": parts[5],
+        "Time": parts[6],
+        "Zevercloud communication": "ok" if parts[7].startswith("OK") else "error",
+    }
+    if parts[1] in ("0", "3"):
+        result["Serial Number"] = parts[2]
+    else:
+        result["Registry ID"] = parts[2]
 
-        except requests.exceptions.ConnectionError as ex1:
-            print("connection lost. ConnectionError.")
-            if lastreading < 5:
-                startPolling(arguments['<URL>'])
-            continue
+    inverters = []
+    index = 9
+    for _ in range(count):
+        serial, power, energy, status = parts[index:index + 4]
+        watt = int(power)
+        if watt < 0 or not serial:
+            raise ValueError("Invalid inverter reading")
+        inverters.append({
+            "SN": serial,
+            "PAC(W)": watt,
+            "E_Today(KWh)": correct_E_Today(energy),
+            "Status": status,
+        })
+        index += 4
+    result["inverter"] = inverters
 
-        content = response.text
-        result = processZeverResponse(content)
-        for inverterData in result['inverter']:
-            lastreading = int(inverterData['PAC(W)'])
-            # (date text, SN text, PAC_W int,  E_TODAY real, Status text)
-
-            params = (str(datetime.now()),
-                      inverterData['SN'],
-                      inverterData['PAC(W)'],
-                      correct_E_Today(inverterData['E_Today(KWh)']),
-                      inverterData['Status'])
-            sql = 'INSERT INTO inverterData VALUES(?,?,?,?,?)'
-            conn.execute(sql, params)
-            conn.commit()
-
-        if verbose:
-            print(result)
-        time.sleep(interval)
+    meter = {"status": parts[index]}
+    if meter["status"].startswith("OK"):
+        if len(parts) < index + 5:
+            raise ValueError("Truncated meter reading")
+        meter.update(zip(("m_p", "m_in", "m_out", "m_meter"),
+                         parts[index + 1:index + 5]))
+    result["meter"] = meter
+    return result
 
 
-def initDB(arguments, conn):
-    print('Initialising DB - all data are getting lost')
-    if query_yes_no('Do you want to proceed and delete all data'):
-        c = conn.cursor()
-        # Create table
-        c.execute('''CREATE TABLE inverterData
-                 (date text, SN text, PAC_W int,  E_TODAY real, Status text)''')
+def inverter_url(host):
+    """Accept an IP, hostname, base URL or full home.cgi URL."""
+    raw = host if "://" in host else "http://" + host
+    parsed = urlsplit(raw)
+    if parsed.scheme != "http" or not parsed.hostname:
+        raise ValueError("Use an HTTP inverter host or URL")
+    if parsed.path not in ("", "/", "/home.cgi") or parsed.query or parsed.fragment:
+        raise ValueError("Expected the inverter host or /home.cgi")
+    return f"{raw.rstrip('/').removesuffix('/home.cgi')}/home.cgi"
+
+
+def collect_once(conn, session, url, verbose=False):
+    response = session.get(url, cookies={"customer_l": "en_us"}, timeout=10)
+    response.raise_for_status()
+    result = processZeverResponse(response.text)
+    timestamp = datetime.now().isoformat(sep=" ")
+    rows = [
+        (timestamp, inv["SN"], inv["PAC(W)"], inv["E_Today(KWh)"], inv["Status"])
+        for inv in result["inverter"]
+    ]
+    if rows:
+        conn.executemany("INSERT INTO inverterData VALUES (?,?,?,?,?)", rows)
         conn.commit()
-        print('DB Initalised')
-    else:
-        print("DB not initialised")
-
-
-if __name__ == '__main__':
-    conn = sqlite3.connect('zeverData.db')
-    arguments = docopt(__doc__)
-    verbose = arguments['--verbose']
     if verbose:
-        print(arguments)
-    if arguments['--initDB']:
-        initDB(arguments, conn)
-    else:
-        collectData(arguments, conn, verbose)
-    conn.close()
+        LOG.info("Inverter readings: %s", result)
+    return len(rows)
+
+
+def start_collection(conn, url, interval=30, once=False, verbose=False):
+    """Retry HTTP directly; no platform-dependent ping and no night-time busy loop."""
+    failures = 0
+    with requests.Session() as session:
+        while True:
+            try:
+                count = collect_once(conn, session, url, verbose)
+                failures = 0
+                LOG.info("Stored %d inverter reading(s)", count)
+                if once:
+                    return
+                delay = interval
+            except (requests.RequestException, ValueError, IndexError) as exc:
+                if once:
+                    raise
+                failures += 1
+                delay = min(300, max(interval, 30) * 2 ** min(failures - 1, 4))
+                LOG.warning("Inverter unavailable or response invalid: %s; retry in %ds", exc, delay)
+            time.sleep(delay)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("host", nargs="?", default=os.environ.get("ZEVER_HOST"),
+                        help="inverter IP, hostname or HTTP URL (or set ZEVER_HOST)")
+    parser.add_argument("--initDB", action="store_true", help="create database if absent; never deletes data")
+    parser.add_argument("--db", type=Path, default=DB_PATH, help="SQLite database path")
+    parser.add_argument("--once", action="store_true", help="read one sample and exit")
+    parser.add_argument("--verbose", "-v", action="store_true")
+    args = parser.parse_args(argv)
+    if not args.initDB and not args.host:
+        parser.error("supply the inverter host or set ZEVER_HOST")
+    logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING,
+                        format="%(asctime)s %(levelname)s %(message)s")
+    args.db.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(args.db, timeout=30) as conn:
+        initialise_database(conn)
+        if not args.initDB:
+            try:
+                start_collection(conn, inverter_url(args.host), once=args.once,
+                                 verbose=args.verbose)
+            except KeyboardInterrupt:
+                LOG.info("Stopped")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

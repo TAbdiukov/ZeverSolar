@@ -1,27 +1,7 @@
-"""Plot Zever Data using Plotly
-Usage:
-  zeverPlotly [--today]
+"""Retired Plotly Cloud prototype. Use dashboard.py instead.
 
-Options:
-  -h --help     show this
-  --today       only plot today
+The original file contained an embedded API key. No cloud account is needed.
 """
 
-import sqlite3
-import time
-import datetime
-from docopt import docopt
-import plotly
-from dateutil import parser
-from datetime import datetime, timedelta
-
-
-if __name__ == '__main__':
-    conn = sqlite3.connect('zeverData.db')
-    arguments = docopt(__doc__)
-    print(arguments)
-    # does not seem like a safe idea to store key in code?
-    # it's a revoked api key
-    plotly.tools.set_credentials_file(
-        username='stephanmeyn', api_key='Rh3pgWgqtK92PR7yYz9A')
-    # plot(arguments)
+if __name__ == "__main__":
+    print("Plotly Cloud integration has been retired. Run: python dashboard.py")

@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#10232a">
+  <title>ZeverSolar · Generation monitor</title>
+  <link href="/static/bootstrap.min.css" rel="stylesheet">
+  <link href="/static/app.css" rel="stylesheet">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="container-fluid shell d-flex align-items-center justify-content-between py-3">
+      <a class="brand text-decoration-none d-flex align-items-center gap-3" href="/" aria-label="ZeverSolar home">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 40 40" width="33" height="33" fill="none"><circle cx="20" cy="20" r="8" fill="#d4ed91"/><path d="M20 2v8m0 20v8M2 20h8m20 0h8M7.3 7.3l5.7 5.7m14 14 5.7 5.7m0-25.4L27 13M13 27l-5.7 5.7" stroke="#d4ed91" stroke-width="2.7" stroke-linecap="round"/></svg>
+        </span>
+        <span class="brand-label"><strong>ZEVER<span>SOLAR</span></strong><small>ENERGY INTELLIGENCE</small></span>
+      </a>
+      <div class="top-right d-flex align-items-center gap-2">
+        <span class="status-chip"><span class="status-dot"></span> LOCAL DASHBOARD</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="container-fluid shell pb-5">
+    <div class="hero d-flex flex-wrap justify-content-between align-items-end gap-3">
+      <div>
+        <p class="eyebrow mb-2">YOUR SOLAR SYSTEM <span class="dot-separator">/</span> PERFORMANCE HISTORY</p>
+        <h1>Every ray. <em>In perspective.</em></h1>
+        <p class="hero-copy mb-0">Explore generation, understand the seasons, and find the patterns behind your power.</p>
+      </div>
+      <div class="hero-tag"><span class="hero-tag-icon" aria-hidden="true">◷</span><span>TIMEZONE</span><strong>Raspberry Pi local time</strong></div>
+    </div>
+
+    <div class="layout mt-4">
+      <aside class="filter-panel">
+        <div class="filter-head d-flex justify-content-between align-items-center"><span>EXPLORE YOUR DATA</span><span class="filter-symbol" aria-hidden="true">☷</span></div>
+        <form id="filters" class="filter-body">
+          <label class="form-label label-upper" for="granularity">TIME RESOLUTION</label>
+          <select class="form-select" id="granularity" name="granularity">
+            <option value="hourly">Hourly</option>
+            <option value="daily" selected>Daily</option>
+            <option value="weekly">Weekly</option>
+            <option value="monthly">Monthly</option>
+            <option value="annual">Annual</option>
+          </select>
+          <div class="rule"></div>
+          <label class="form-label label-upper" for="from">DATE RANGE</label>
+          <div class="row g-2">
+            <div class="col-6"><label class="small-label" for="from">From</label><input class="form-control" id="from" name="from" type="date" required></div>
+            <div class="col-6"><label class="small-label" for="to">To</label><input class="form-control" id="to" name="to" type="date" required></div>
+          </div>
+          <div class="rule"></div>
+          <label class="form-label label-upper" for="inverter">INVERTER</label>
+          <select class="form-select" id="inverter" name="inverter"><option value="all">All inverters · combined</option></select>
+          <div class="rule"></div>
+          <label class="form-label label-upper" for="season">SEASON</label>
+          <select class="form-select" id="season" name="season">
+            <option value="all">All seasons</option>
+            <option value="summer">Summer · Dec – Feb</option>
+            <option value="autumn">Autumn · Mar – May</option>
+            <option value="winter">Winter · Jun – Aug</option>
+            <option value="spring">Spring · Sep – Nov</option>
+          </select>
+          <p class="field-hint mb-0">Southern Hemisphere seasons</p>
+          <div class="rule"></div>
+          <label class="form-label label-upper" for="hour_from">TIME OF DAY</label>
+          <div class="row g-2">
+            <div class="col-6"><label class="small-label" for="hour_from">From</label><select id="hour_from" name="hour_from" class="form-select"></select></div>
+            <div class="col-6"><label class="small-label" for="hour_to">Until</label><select id="hour_to" name="hour_to" class="form-select"></select></div>
+          </div>
+          <p class="field-hint">Start inclusive, end exclusive (local time).</p>
+          <button class="btn apply-btn w-100" type="submit" id="apply">Update view <span aria-hidden="true">↗</span></button>
+          <button class="btn reset-btn w-100 mt-2" type="button" id="reset">Reset filters</button>
+        </form>
+        <div class="filter-foot"><span class="foot-orbit" aria-hidden="true">✳</span><p class="mb-0">Made for curious minds and quiet, dependable monitoring.</p></div>
+      </aside>
+
+      <section class="content" aria-label="Generation analysis">
+        <div id="error" class="alert alert-warning d-none" role="alert"></div>
+        <div class="stats-grid" aria-live="polite">
+          <div class="stat-tile stat-primary"><div class="stat-label">REPORTED ENERGY <span aria-hidden="true">↗</span></div><div id="stat-kwh" class="stat-value">—</div><div id="stat-kwh-sub" class="stat-sub">Across visible recorded periods</div></div>
+          <div class="stat-tile"><div class="stat-label">PERIODS RECORDED</div><div id="stat-recorded" class="stat-value">—</div><div class="stat-sub">Periods with usable readings</div></div>
+          <div class="stat-tile"><div class="stat-label">MISSING PERIODS</div><div id="stat-missing" class="stat-value">—</div><div id="stat-missing-sub" class="stat-sub">Never filled with invented values</div></div>
+          <div class="stat-tile"><div class="stat-label">LAST RECORDED POWER</div><div id="stat-power" class="stat-value">—</div><div id="stat-power-sub" class="stat-sub">From latest inverter samples</div></div>
+        </div>
+
+        <section class="report-panel mt-3" aria-labelledby="chart-title">
+          <div class="report-top d-flex flex-wrap align-items-start justify-content-between gap-2">
+            <div><p class="eyebrow report-eyebrow mb-2">GENERATION OVER TIME <span class="dot-separator">/</span> kWh</p><h2 id="chart-title">Daily energy production</h2><p id="chart-subtitle" class="report-subtitle mb-0">Measured generation for your selected period</p></div>
+            <span id="basis" class="data-pill">DAILY METER MAXIMA</span>
+          </div>
+          <div class="chart-legend d-flex flex-wrap gap-4"><span><i class="legend-swatch observed"></i>Recorded</span><span><i class="legend-swatch partial"></i>Partial</span><span><i class="legend-swatch missing"></i>No reading</span></div>
+          <div class="chart-shell" id="chart-scroll"><div id="chart" role="img" aria-label="Generation chart" class="chart-svg"><p class="empty">Loading readings…</p></div></div>
+          <div class="chart-footer d-flex flex-wrap justify-content-between gap-2"><p id="coverage-note" class="mb-0">Gaps are left visible, not interpolated.</p><p class="mb-0">← Scroll chart for more periods →</p></div>
+        </section>
+
+        <section class="report-panel table-panel mt-3" aria-labelledby="table-title">
+          <div class="report-top d-flex justify-content-between align-items-center gap-3"><div><p class="eyebrow report-eyebrow mb-2">THE DETAILS</p><h2 id="table-title">Reading breakdown</h2></div><span id="table-count" class="table-count">— periods</span></div>
+          <div class="table-responsive table-container"><table class="table align-middle data-table mb-0"><thead><tr><th scope="col">PERIOD</th><th scope="col" class="text-end">ENERGY (kWh)</th><th scope="col" class="text-end">RECORDED</th><th scope="col" class="text-end">DATA STATUS</th></tr></thead><tbody id="readings-table"><tr><td colspan="4" class="text-center py-5">Loading data…</td></tr></tbody></table></div>
+        </section>
+        <div class="method-note"><strong>About your readings.</strong> Daily, weekly, monthly and annual totals use the highest daily cumulative energy meter value for each inverter. When you select hours of the day, or hourly resolution, energy is derived from neighbouring samples at most five minutes apart. Longer outages are never estimated. A recorded day is not a guarantee that the inverter was polled all day.</div>
+      </section>
+    </div>
+  </main>
+  <script src="/static/bootstrap.bundle.min.js" defer></script>
+</body>
+</html>

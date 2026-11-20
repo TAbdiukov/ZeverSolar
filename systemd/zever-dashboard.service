@@ -1,0 +1,15 @@
+[Unit]
+Description=ZeverSolar Bootstrap dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/zeversolar
+EnvironmentFile=%h/zeversolar/zever.env
+ExecStart=%h/zeversolar/.venv/bin/python %h/zeversolar/dashboard.py
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=default.target

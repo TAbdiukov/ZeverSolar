@@ -1,139 +1,67 @@
-"""Plot Zever Data
-Usage:
-  plotZever [--today] [--from=startDate --to=endDate [--totals] ]
+"""Optional desktop plots from the same SQLite database as the web dashboard."""
 
-Options:
-  -h --help     show this
-  --today       only plot today
-  --from=startDate   startdate in format yyyy-mm-dd
-  --to=endDate       endDate  in format yyyy-mm-dd
-"""
-
+import argparse
+from datetime import date, datetime, timedelta
 import sqlite3
-import time
-import datetime
-from docopt import docopt
 
-#port numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-
-from dateutil import parser
-from datetime import datetime, timedelta, date
+from zever import DB_PATH
 
 
-def buildDateQuery (select, arguments, post="  ORDER BY date"):
-    sql = select
-    fToday = arguments['--today']
-    if fToday:
-        lower = str(datetime.now().date())
-        upper = str(datetime.now().date() + timedelta(days=1))
-        whereValue =  ' WHERE date >= "' + lower + '" AND date < "' + upper + '"'
-        sql = sql + whereValue
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--today", action="store_true")
+    parser.add_argument("--from", dest="start", help="YYYY-MM-DD (inclusive)")
+    parser.add_argument("--to", dest="end", help="YYYY-MM-DD (inclusive)")
+    parser.add_argument("--totals", action="store_true", help="daily generation instead of sampled W")
+    parser.add_argument("--db", default=DB_PATH)
+    args = parser.parse_args(argv)
+    try:
+        import matplotlib.dates as mdates
+        import matplotlib.pyplot as plt
+    except ImportError:
+        parser.error("Matplotlib is optional; install it with 'pip install matplotlib'")
+    if args.today:
+        first = last = date.today()
     else:
-        leadIn = ' WHERE '
-        if arguments['--from']:
-            fromDt = parser.parse(arguments['--from'])
-            sql = sql + ' WHERE date>= "' + str (fromDt) +'" '
-            leadIn = ' AND '
-        if arguments['--to']:
-            toDt = parser.parse(arguments['--to'])
-            sql = sql + leadIn + ' date< "' + str(toDt) + '"'
-    sql += post
-    print(sql)
-    return sql
+        first = date.fromisoformat(args.start) if args.start else date.today() - timedelta(days=6)
+        last = date.fromisoformat(args.end) if args.end else date.today()
+    if first > last:
+        parser.error("--from must be on or before --to")
 
-def plotDetailed(arguments):
-    conn = sqlite3.connect('zeverData.db')
-    c = conn.cursor()
-    sql = buildDateQuery("SELECT  date, SN, PAC_W,  E_TODAY, Status FROM inverterData", arguments )
-
-    data = {}
-    count=0
-    for row in c.execute(sql):
-        # print(row)
-        count += 1
-        id = row[1]
-        if not id in data:
-            data[id] = {'ts': [], 'current': [], 'total': []}
-        # print(row[0])
-        dt = parser.parse(row[0])
-        data[id]['ts'].append(dt)
-        data[id]['current'].append(row[2])
-        data[id]['total'].append(row[3])
-    if count == 0:
-        print("No Data returned")
+    with sqlite3.connect(args.db) as conn:
+        if args.totals:
+            rows = conn.execute(
+                "SELECT substr(date,1,10), SN, MAX(E_TODAY) FROM inverterData "
+                "WHERE date >= ? AND date < ? GROUP BY substr(date,1,10), SN ORDER BY date",
+                (str(first), str(last + timedelta(days=1))),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT date, SN, PAC_W FROM inverterData "
+                "WHERE date >= ? AND date < ? ORDER BY date",
+                (str(first), str(last + timedelta(days=1))),
+            ).fetchall()
+    if not rows:
+        print("No readings in this date range")
         return
-    for id in data:
-        # print(data[id]['current'])
-        plt.plot(data[id]['ts'], data[id]['current'])
-
-    if arguments['--today']:
-        locator = mdates.HourLocator()
-    else:
-        locator = mdates.AutoDateLocator()
-
-    plt.gca().xaxis.set_major_formatter(mdates.AutoDateFormatter(locator))
-
-    plt.gcf().autofmt_xdate()
-    # work out title
-    if arguments['--today']:
-        plt.title(str(datetime.now()))
-    elif arguments['--from']  or arguments['--to']:
-        title = ' - '.join([arguments['--from'], arguments['--to']])
-        plt.title(title)
-    plt.ylabel(('Watt'))
-
-    plt.show()
-
-def plotTotals(arguments):
-    """plot day totals only"""
-    conn = sqlite3.connect('zeverData.db')
-    c = conn.cursor()
-    sql =  buildDateQuery("SELECT  date, SN, E_TODAY FROM inverterData",
-                          arguments,
-                          post =  " ORDER BY date ASC" )
-    sql += " "
-    data = {}
-    print (sql)
-    for row in c.execute(sql):
-
-        #SELECT  date, SN, PAC_W,  E_TODAY, Status FROM inverterData
-        id = row[1]
-        if not id in data:
-            data[id] = {}
-        # print(row[0])
-        dt = parser.parse(row[0]).date()
-        if not (dt in data[id]) or (data[id][dt] < row[2]):
-            data[id][dt] = row[2] # overwrite with the latest value
-
-    #fig, ax = plt.subplots()
-    for id in data:
-        xData = [dt for dt in sorted(data[id])]
-        ticks =[str(dt )for dt in data[id]]
-        yData = [ data[id][dt] for dt in sorted(data[id])]
-        print (yData)
-        print (xData)
-        plt.bar(range(len(yData)),yData, align='center')
-        plt.xticks(range(len(yData)), ticks)
-        #plt.bar(xData, yData)
-        print(xData)
-
-    locator = mdates.DateLocator()
-    #plt.gca().xaxis.set_major_formatter(mdates.AutoDateFormatter(locator))
-    #plt.gcf().autofmt_xdate()
-    plt.ylabel(('kWh'))
+    grouped = {}
+    for timestamp, serial, reading in rows:
+        grouped.setdefault(serial, [[], []])
+        grouped[serial][0].append(date.fromisoformat(timestamp) if args.totals
+                                  else datetime.fromisoformat(timestamp))
+        grouped[serial][1].append(reading)
+    figure, ax = plt.subplots()
+    for serial, (dates, readings) in grouped.items():
+        ax.plot(dates, readings, label=serial)
+    locator = mdates.AutoDateLocator()
+    ax.xaxis.set_major_locator(locator)
+    ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(locator))
+    ax.set_ylabel("Daily generation (kWh)" if args.totals else "AC power (W)")
+    ax.set_title(f"ZeverSolar: {first} to {last}")
+    ax.legend()
+    figure.autofmt_xdate()
     plt.show()
 
 
-def plot(arguments):
-    if (arguments['--totals']):
-        plotTotals(arguments)
-    else:
-        plotDetailed(arguments)
-
-if __name__ == '__main__':
-    #conn = sqlite3.connect('zeverData.db')
-    arguments = docopt(__doc__)
-    print(arguments)
-    plot(arguments)
+if __name__ == "__main__":
+    main()
