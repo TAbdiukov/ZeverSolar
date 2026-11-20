@@ -1,3 +1,4 @@
+from contextlib import closing
 import sqlite3
 import unittest
 from unittest.mock import Mock
@@ -54,14 +55,14 @@ class ParserTests(unittest.TestCase):
             inverter_url("192.168.1.20/admin")
 
     def test_initialisation_preserves_old_data(self):
-        with sqlite3.connect(":memory:") as conn:
+        with closing(sqlite3.connect(":memory:")) as conn, conn:
             initialise_database(conn)
             conn.execute("INSERT INTO inverterData VALUES(?,?,?,?,?)", ("2020-01-01", "abc", 10, 1, "OK"))
             initialise_database(conn)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM inverterData").fetchone()[0], 1)
 
     def test_collector_writes_one_transaction_for_all_inverters(self):
-        with sqlite3.connect(":memory:") as conn:
+        with closing(sqlite3.connect(":memory:")) as conn, conn:
             initialise_database(conn)
             response = Mock()
             response.text = "\n".join(response_lines())

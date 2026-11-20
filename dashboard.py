@@ -1,6 +1,7 @@
 """Private-LAN ZeverSolar dashboard: Python standard-library HTTP server."""
 
 import argparse
+from contextlib import closing
 import json
 import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -9,6 +10,7 @@ import sqlite3
 from urllib.parse import parse_qs, urlsplit
 
 from analytics import get_readings
+from config import load_config
 from zever import DB_PATH, initialise_database
 
 STATIC = Path(__file__).with_name("static")
@@ -40,7 +42,7 @@ def handler_for(db_path):
             path = urlsplit(self.path)
             if path.path == "/api/readings":
                 try:
-                    with sqlite3.connect(db_path, timeout=30) as conn:
+                    with closing(sqlite3.connect(db_path, timeout=30)) as conn:
                         data = get_readings(conn, parse_qs(path.query))
                     self.json_reply(200, data)
                 except ValueError as exc:
@@ -60,15 +62,26 @@ def handler_for(db_path):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--host", default=os.environ.get("ZEVER_WEB_HOST", "127.0.0.1"))
-    parser.add_argument("--port", type=int, default=int(os.environ.get("ZEVER_WEB_PORT", "8080")))
+    parser.add_argument("--config", type=Path, help="settings file (default: config.ini beside script)")
+    parser.add_argument("--host", help="dashboard bind address (overrides config.ini)")
+    parser.add_argument("--port", type=int, help="dashboard port (overrides config.ini)")
     parser.add_argument("--db", type=Path, default=DB_PATH)
     args = parser.parse_args(argv)
+    try:
+        settings = load_config(args.config)
+        host = args.host or os.environ.get("ZEVER_WEB_HOST") or settings.get(
+            "dashboard", "host", fallback="127.0.0.1").strip()
+        port = args.port if args.port is not None else int(
+            os.environ.get("ZEVER_WEB_PORT") or settings.get("dashboard", "port", fallback="8080"))
+        if not host or not 1 <= port <= 65535:
+            raise ValueError("Dashboard host must not be empty; port must be 1–65535")
+    except ValueError as exc:
+        parser.error(str(exc))
     args.db.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(args.db, timeout=30) as conn:
+    with closing(sqlite3.connect(args.db, timeout=30)) as conn, conn:
         initialise_database(conn)
-    with ThreadingHTTPServer((args.host, args.port), handler_for(args.db)) as server:
-        print(f"ZeverSolar: http://{args.host}:{server.server_port} (private LAN only)", flush=True)
+    with ThreadingHTTPServer((host, port), handler_for(args.db)) as server:
+        print(f"ZeverSolar: http://{host}:{server.server_port} (private LAN only)", flush=True)
         try:
             server.serve_forever()
         except KeyboardInterrupt:

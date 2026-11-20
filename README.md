@@ -1,8 +1,25 @@
-# ZeverSolar · Raspberry Pi energy monitor
+# ZeverSolar · Raspberry Pi / Windows energy monitor
 
 Modernised version of the original Python ZeverSolar HTTP collector. Collects from the inverter/gateway's **local HTTP `/home.cgi` endpoint**, writes to the **original SQLite `inverterData` table**, and serves a Bootstrap dashboard with hourly, daily, weekly, monthly and annual energy views.
 
 **Assumptions:** Your device still exposes the same newline-delimited `home.cgi` response as the original project, and the Raspberry Pi's clock/timezone matches the installation's local time. The supplied parser has tests, but this project has **not yet been tested against your physical inverter**. This is designed for a **trusted home LAN only**, not the public internet. Seasons are **Southern Hemisphere** (summer Dec–Feb).
+
+## Configuration (both Raspberry Pi and Windows)
+
+Open **`config.ini`** in a text editor and set the inverter's local IP address or hostname. The included file deliberately leaves `host` blank so you cannot accidentally connect to an example address:
+
+```ini
+[inverter]
+host = 192.168.1.50
+
+[dashboard]
+host = 127.0.0.1
+port = 8080
+```
+
+The `inverter` address is the device offering HTTP `/home.cgi`, **not** the computer running the dashboard. On Windows, leave the dashboard host as `127.0.0.1` for local testing; for trusted home-network access on a Raspberry Pi, use `0.0.0.0` (no authentication or HTTPS). The file is located **beside the Python scripts**, regardless of which working directory starts them.
+
+Both programs also accept `--config path/to/another.ini`. Precedence is **command-line host/port > existing `ZEVER_HOST`, `ZEVER_WEB_HOST` or `ZEVER_WEB_PORT` environment variables > `config.ini` > built-in dashboard defaults**. The existing `ZEVER_DB` variable and each program's `--db` option are unchanged. A missing default config file allows old host-argument/environment-variable usage; an explicitly named missing config file is an error.
 
 ## Installation on Raspberry Pi OS
 
@@ -19,37 +36,28 @@ python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
 ```
 
-Set the actual LAN IP address/hostname of your ZeverSolar gateway:
+Edit `config.ini` as above, then run the collector (no command-line IP required):
 
 ```bash
 # This creates the database if it doesn't already exist; it NEVER erases readings.
 .venv/bin/python zever.py --initDB
-.venv/bin/python zever.py 192.168.1.50 --once --verbose
+.venv/bin/python zever.py --once --verbose
 # Continuous data capture (every 30 seconds when reachable):
-.venv/bin/python zever.py 192.168.1.50
+.venv/bin/python zever.py
 ```
 
 In a **second terminal**, start the local dashboard:
 
 ```bash
 cd ~/zeversolar
-.venv/bin/python dashboard.py --host 0.0.0.0 --port 8080
+.venv/bin/python dashboard.py
 ```
 
-On another device on the same network, browse to **`http://<pi-LAN-IP>:8080`**. For Pi-only access, omit `--host` and open `http://127.0.0.1:8080`. `0.0.0.0` listens on every Pi interface: only enable it on a trusted, firewalled home network. There is no user authentication or HTTPS.
+If you set `[dashboard] host = 0.0.0.0`, browse to **`http://<pi-LAN-IP>:8080`** from another device on the same network. Otherwise open **`http://127.0.0.1:8080`** on the Pi itself. `0.0.0.0` listens on every Pi interface: only enable it on a trusted, firewalled home network. There is no user authentication or HTTPS.
 
 ### Start both automatically on boot (optional)
 
-Two systemd **user** unit files are supplied in `systemd/`. They expect the project directory at `~/zeversolar` and a `.venv` made as above. Create `~/zeversolar/zever.env` (this file is gitignored):
-
-```ini
-ZEVER_HOST=192.168.1.50
-# Optional: ZEVER_DB=/home/your-user/zeversolar/zeverData.db
-ZEVER_WEB_HOST=0.0.0.0
-ZEVER_WEB_PORT=8080
-```
-
-Then:
+Two systemd **user** unit files are supplied in `systemd/`. They expect the project directory at `~/zeversolar` and a `.venv` made as above. **No `zever.env` file is required.** Both services read the same `~/zeversolar/config.ini`. To view the dashboard across your home network, configure `[dashboard] host = 0.0.0.0`. Then:
 
 ```bash
 mkdir -p ~/.config/systemd/user
@@ -62,7 +70,29 @@ systemctl --user status zever-collector.service zever-dashboard.service
 journalctl --user -u zever-collector.service -n 50
 ```
 
-**Important:** Copy `zever.env` from your machine, not this README; adapt any file paths. Keep it private. The dashboard does not need the gateway address—it reads the SQLite file created by the collector.
+**Important:** The dashboard does not need the gateway address—it reads the SQLite file created by the collector. If you use a custom config path for unattended service operation, amend the service's `ExecStart` line with `--config /path/to/file.ini`.
+
+## Windows offline testing (no inverter needed)
+
+Requires **Python 3.9+** on Windows 10/11 (with the Python launcher `py` or `python` on PATH). Extract the ZIP, open the `zeversolar_updated` directory, then **double-click `windows-demo.bat`** (or run it from Command Prompt). It creates a Windows virtual environment, installs Requests, produces an isolated synthetic `demo_zever.db`, and starts the dashboard at **http://127.0.0.1:8080**. Stop it with **Ctrl+C**. No inverter IP is required for the demo; the real `zeverData.db` is not touched.
+
+Or run the same steps yourself in **Command Prompt**:
+
+```bat
+py -3 -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+.venv\Scripts\python.exe make_demo_db.py
+.venv\Scripts\python.exe dashboard.py --db demo_zever.db
+```
+
+The demo includes two synthetic inverters and missing days/hours so you can exercise the filters. The demo database **is not overwritten** on subsequent launches; delete `demo_zever.db` to generate a fresh rolling 90-day sample. To test a *real* inverter on Windows, edit `[inverter] host` and run:
+
+```bat
+.venv\Scripts\python.exe zever.py --once --verbose
+.venv\Scripts\python.exe dashboard.py
+```
+
+The normal collector runs on Windows too and uses HTTP requests, not platform-specific `ping`. Do not start the real collector until the inverter IP has been configured. For Windows, use the `.venv\Scripts\python.exe` path rather than the Pi's `.venv/bin/python`. Linux's systemd services are **not** used on Windows. Windows-specific steps are supplied but must still be confirmed on a physical Windows machine.
 
 ## Dashboard filtering and data rules
 
@@ -110,7 +140,7 @@ From the project directory:
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
-Tests cover inverter parsing, meter values, decimal correction, idempotent DB setup, valid HTTP URL formation, storing multiple inverter rows, date filtering, inverter selection, seasonal/weekly grouping, missing periods, the five-minute gap rule, API responses, and bundled Bootstrap files. A live-inverter end-to-end test must still be performed on your network.
+Tests cover inverter parsing, meter values, decimal correction, idempotent DB setup, valid HTTP URL formation, storing multiple inverter rows, date filtering, inverter selection, seasonal/weekly grouping, missing periods, the five-minute gap rule, API responses, bundled Bootstrap files, config precedence/validation and demo database creation. On Windows use `.venv\Scripts\python.exe -m unittest discover -s tests -v`. A live-inverter end-to-end test must still be performed on your network. See `CHANGELOG.md` for the release history and `BUGFIXES.md` for the original code review.
 
 ## Dependencies and third-party credits
 

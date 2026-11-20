@@ -1,4 +1,5 @@
 from http.server import ThreadingHTTPServer
+from contextlib import closing
 import json
 from pathlib import Path
 import sqlite3
@@ -16,7 +17,7 @@ class DashboardTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         database = Path(self.directory.name) / "zeverData.db"
-        with sqlite3.connect(database) as conn:
+        with closing(sqlite3.connect(database)) as conn, conn:
             initialise_database(conn)
             conn.execute("INSERT INTO inverterData VALUES(?,?,?,?,?)",
                          ("2026-01-01 11:00:00", "A", 100, .5, "Normal"))

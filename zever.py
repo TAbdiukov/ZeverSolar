@@ -1,6 +1,7 @@
 """Read a ZeverSolar inverter's HTTP /home.cgi endpoint into SQLite."""
 
 import argparse
+from contextlib import closing
 import logging
 import os
 import sqlite3
@@ -10,6 +11,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import requests
+from config import load_config
 
 DB_PATH = Path(os.environ.get("ZEVER_DB", Path(__file__).with_name("zeverData.db")))
 LOG = logging.getLogger("zeversolar")
@@ -138,23 +140,28 @@ def start_collection(conn, url, interval=30, once=False, verbose=False):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("host", nargs="?", default=os.environ.get("ZEVER_HOST"),
-                        help="inverter IP, hostname or HTTP URL (or set ZEVER_HOST)")
+    parser.add_argument("host", nargs="?", help="optional inverter host (overrides config.ini)")
+    parser.add_argument("--config", type=Path, help="settings file (default: config.ini beside script)")
     parser.add_argument("--initDB", action="store_true", help="create database if absent; never deletes data")
     parser.add_argument("--db", type=Path, default=DB_PATH, help="SQLite database path")
     parser.add_argument("--once", action="store_true", help="read one sample and exit")
     parser.add_argument("--verbose", "-v", action="store_true")
     args = parser.parse_args(argv)
-    if not args.initDB and not args.host:
-        parser.error("supply the inverter host or set ZEVER_HOST")
+    try:
+        settings = load_config(args.config)
+    except ValueError as exc:
+        parser.error(str(exc))
+    host = args.host or os.environ.get("ZEVER_HOST") or settings.get("inverter", "host", fallback="").strip()
+    if not args.initDB and not host:
+        parser.error("set [inverter] host in config.ini, set ZEVER_HOST or supply a host argument")
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING,
                         format="%(asctime)s %(levelname)s %(message)s")
     args.db.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(args.db, timeout=30) as conn:
+    with closing(sqlite3.connect(args.db, timeout=30)) as conn, conn:
         initialise_database(conn)
         if not args.initDB:
             try:
-                start_collection(conn, inverter_url(args.host), once=args.once,
+                start_collection(conn, inverter_url(host), once=args.once,
                                  verbose=args.verbose)
             except KeyboardInterrupt:
                 LOG.info("Stopped")
